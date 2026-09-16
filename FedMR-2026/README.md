@@ -1,4 +1,4 @@
-# FedMR-2026: Federated Memory Refinement for Resource-Constrained On-Device LLM Inference
+# FedMR: Federated Memory Refinement for Resource-Constrained On-Device LLM Inference
 
 This repository provides a modular implementation of the  2026 FedMR experiment. It evaluates nine memory-enhanced inference scenarios and trains Scene 8 with federated online learning, then plots the reward-cost convergence curves.
 
