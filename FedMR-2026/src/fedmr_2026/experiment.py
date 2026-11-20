@@ -9,7 +9,7 @@ import torch
 from .baselines import compress_memory_bank_by_merging
 from .builder import MemoryBankBuilder
 from .config import ExperimentConfig, LLMConfig
-from .federated import FederatedCoordinator
+from .federated import FederatedCoordinator, run_simulated_federation
 from .feedback import FeedbackLearner
 from .llm_client import LLMClient
 from .models import PolicyNetwork
@@ -42,6 +42,8 @@ def get_avg_task_emb(eval_file: Path, llm_client: LLMClient, num_eval_samples: i
 
 
 def run_experiment(config: ExperimentConfig, llm_config: LLMConfig | None = None):
+    if not 0 <= config.mu <= 1 or not np.isfinite([config.clip_c, config.sigma]).all() or config.clip_c <= 0 or config.sigma < 0:
+        raise ValueError("Invalid mu/C/sigma")
     set_seed(config.seed)
     start_time = time.time()
     config.output_dir.mkdir(parents=True, exist_ok=True)
@@ -78,7 +80,7 @@ def run_experiment(config: ExperimentConfig, llm_config: LLMConfig | None = None
     if not full_memory_bank.units:
         raise RuntimeError("记忆库为空，请检查数据集和 difficulty_threshold 设置。")
 
-    task_emb = get_avg_task_emb(config.eval_file, llm, config.num_eval_samples, full_memory_bank.units[0].key)
+    task_emb = get_avg_task_emb(config.train_file, llm, config.num_eval_samples, full_memory_bank.units[0].key)
 
     print("\n【场景1】无外部知识库增强")
     sys1 = KDD2026System(memory_bank=None, llm_config=llm_config)
@@ -86,7 +88,7 @@ def run_experiment(config: ExperimentConfig, llm_config: LLMConfig | None = None
     print(f"困惑度: {ppl1:.4f}")
 
     print("\n【场景2】整个外部数据库")
-    sys2 = KDD2026System(memory_bank=full_memory_bank, prob_scale=0.9, llm_config=llm_config)
+    sys2 = KDD2026System(memory_bank=full_memory_bank, llm_config=llm_config)
     sys2.current_subset_indices = set(range(len(full_memory_bank.units)))
     sys2.memory_bank.current_subset_indices = sys2.current_subset_indices
     ppl2 = sys2.evaluate_ppl(str(config.eval_file), num_samples=config.num_eval_samples, use_enhanced=True, alpha_base=0.5)
@@ -138,23 +140,45 @@ def run_experiment(config: ExperimentConfig, llm_config: LLMConfig | None = None
     print(f"困惑度: {ppl7:.4f}")
 
     print("\n【场景8】联邦协同")
-    global_coord = FederatedCoordinator()
-    global_coord.upload_units_deduplicate("main", full_memory_bank.units)
+    if config.fed_checkpoint is not None:
+        global_coord = FederatedCoordinator.load(config.fed_checkpoint)
+        if global_coord.input_dim != full_memory_bank.units[0].key.size + 5:
+            raise ValueError("Scorer checkpoint embedding dimension mismatch")
+        execution_mode = "external_checkpoint; C/sigma must be verified from training manifests"
+    else:
+        execution_mode = "logical_client_simulation"
+        global_coord = run_simulated_federation(full_memory_bank.units,
+            num_clients=config.fed_clients, rounds=config.fed_rounds,
+            hidden_dim=config.fed_hidden_dim, C=config.clip_c, sigma=config.sigma,
+            local_epochs=config.fed_local_epochs, lr=config.fed_lr,
+            batch_size=config.fed_batch_size, seed=config.seed, device=config.fed_device)
+    global_coord.save(config.output_dir / "global_scorer.npz")
+    fed_manifest = {"mu": config.mu, "C": config.clip_c if config.fed_checkpoint is None else None,
+        "sigma": config.sigma if config.fed_checkpoint is None else None,
+        "sigma_definition": "absolute per-coordinate standard deviation",
+        "noise_multiplier": config.sigma / config.clip_c if config.fed_checkpoint is None else None,
+        "execution_mode": execution_mode, "rounds_completed": global_coord.round_id,
+        "local_epochs": config.fed_local_epochs if config.fed_checkpoint is None else None,
+        "local_lr": config.fed_lr if config.fed_checkpoint is None else None,
+        "local_batch_size": config.fed_batch_size if config.fed_checkpoint is None else None,
+        "hidden_dim": global_coord.hidden_dim, "seed": config.seed,
+        "formal_dp_guarantee": False, "round_history": global_coord.history}
+    (config.output_dir / "federated_config.json").write_text(json.dumps(fed_manifest, indent=2), encoding="utf-8")
+    print(f"[FED] mu={config.mu:g}, C={fed_manifest['C']}, sigma={fed_manifest['sigma']}, mode={execution_mode}")
     sys8 = KDD2026System(
         memory_bank=full_memory_bank,
         federated_coordinator=global_coord,
-        prob_scale=0.92,
         llm_config=llm_config,
     )
-    sys8.selector.mu = 0.4
-    subset8 = sys8.selector.offline_selection(config.subset_size + 30, 0.3, 0.2, task_emb)
+    sys8.selector.mu = config.mu
+    subset8 = sys8.selector.offline_selection(config.subset_size, 0.3, 0.2, task_emb)
     sys8.current_subset_indices = {idx for idx in subset8 if idx >= 0}
     sys8.memory_bank.current_subset_indices = sys8.current_subset_indices
     ppl8 = sys8.evaluate_ppl(str(config.eval_file), num_samples=config.num_eval_samples, use_enhanced=True, alpha_base=0.5)
     print(f"困惑度: {ppl8:.4f}")
 
     print("\n【场景9】CREAM")
-    sys9 = KDD2026System(memory_bank=full_memory_bank, prob_scale=0.75, llm_config=llm_config)
+    sys9 = KDD2026System(memory_bank=full_memory_bank, llm_config=llm_config)
     subset9 = sys9.selector.offline_selection(config.subset_size, 0.5, 0.5, task_emb)
     sys9.current_subset_indices = {idx for idx in subset9 if idx >= 0}
     sys9.memory_bank.current_subset_indices = sys9.current_subset_indices
@@ -178,6 +202,10 @@ def run_experiment(config: ExperimentConfig, llm_config: LLMConfig | None = None
     for name, ppl in ppl_summary.items():
         print(f"{name}: {ppl:.4f}")
 
+    if not config.run_legacy_policy_simulation:
+        print("Skipping legacy synthetic reward/cost simulation (not measured experimental evidence).")
+        return {"ppl_summary": ppl_summary, "federated_config": fed_manifest}
+    print("WARNING: legacy policy curves are synthetic simulation, NOT measured evidence.")
     print("\n\n【场景8 联邦在线学习 FMR-LLM】")
     online_sys = KDD2026System(
         memory_bank=full_memory_bank,
@@ -185,7 +213,7 @@ def run_experiment(config: ExperimentConfig, llm_config: LLMConfig | None = None
         prob_scale=1.0,
         llm_config=llm_config,
     )
-    online_sys.selector.mu = 0.4
+    online_sys.selector.mu = config.mu
     policy_net = PolicyNetwork(state_dim=10, hidden_dim=64)
     optimizer = torch.optim.Adam(policy_net.parameters(), lr=1e-3)
     cost_calc = CostRewardCalculator()
