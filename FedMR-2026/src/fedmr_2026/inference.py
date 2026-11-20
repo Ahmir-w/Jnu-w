@@ -20,8 +20,6 @@ class EnhancedInferenceEngine:
         self.k = k
         self.temperature = temperature
         self.local_knn: NearestNeighbors | None = None
-        self.global_vectors: np.ndarray | None = None
-        self.global_units_list: list[EnhancedMemoryUnit] = []
 
     def update_models(self):
         subset = self.memory_bank.get_subset_units()
@@ -35,13 +33,7 @@ class EnhancedInferenceEngine:
         else:
             self.local_knn = None
 
-        if self.fed is not None:
-            global_units = self.fed.get_global_units(top_k=100)
-            if global_units:
-                self.global_vectors = np.array([unit.key for unit in global_units])
-                self.global_units_list = global_units
-
-    def knn_search_with_global(self, query_vector: np.ndarray) -> list[tuple[str, float]]:
+    def knn_search_local(self, query_vector: np.ndarray) -> list[tuple[str, float]]:
         all_results: list[tuple[str, float]] = []
         if self.local_knn is not None:
             dists, idxs = self.local_knn.kneighbors(query_vector.reshape(1, -1))
@@ -50,14 +42,10 @@ class EnhancedInferenceEngine:
                 if idx < len(subset):
                     all_results.append((subset[idx].target, dists[0][i]))
 
-        if self.global_vectors is not None and len(self.global_vectors) > 0:
-            dists_global = np.linalg.norm(self.global_vectors - query_vector, axis=1)
-            for idx in np.argsort(dists_global)[: self.k]:
-                all_results.append((self.global_units_list[idx].target, dists_global[idx]))
         return all_results
 
     def compute_knn_probability(self, query_vector: np.ndarray, eval_token: str) -> float:
-        all_results = self.knn_search_with_global(query_vector)
+        all_results = self.knn_search_local(query_vector)
         prob_knn = 0.0
         total_weight = 0.0
         for target_str, dist in all_results:
