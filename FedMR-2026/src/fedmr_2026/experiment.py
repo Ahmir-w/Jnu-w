@@ -146,7 +146,7 @@ def run_experiment(config: ExperimentConfig, llm_config: LLMConfig | None = None
         prob_scale=0.92,
         llm_config=llm_config,
     )
-    sys8.selector.mu = 0.2
+    sys8.selector.mu = 0.4
     subset8 = sys8.selector.offline_selection(config.subset_size + 30, 0.3, 0.2, task_emb)
     sys8.current_subset_indices = {idx for idx in subset8 if idx >= 0}
     sys8.memory_bank.current_subset_indices = sys8.current_subset_indices
@@ -185,7 +185,7 @@ def run_experiment(config: ExperimentConfig, llm_config: LLMConfig | None = None
         prob_scale=1.0,
         llm_config=llm_config,
     )
-    online_sys.selector.mu = 0.2
+    online_sys.selector.mu = 0.4
     policy_net = PolicyNetwork(state_dim=10, hidden_dim=64)
     optimizer = torch.optim.Adam(policy_net.parameters(), lr=1e-3)
     cost_calc = CostRewardCalculator()
