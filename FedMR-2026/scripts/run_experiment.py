@@ -8,8 +8,7 @@ SRC = ROOT / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
-from fedmr2026.config import ExperimentConfig, LLMConfig
-from fedmr2026.experiment import run_experiment
+from fedmr_2026.config import ExperimentConfig, LLMConfig
 
 
 def parse_args():
@@ -30,6 +29,18 @@ def parse_args():
     parser.add_argument("--model", default="meta-llama-31-8b-instruct-q80")
     parser.add_argument("--tokenizer-name", default="meta-llama/Llama-3.1-8B-Instruct")
     parser.add_argument("--embedding-model", default="all-mpnet-base-v2")
+    parser.add_argument("--mu", default=0.4, type=float)
+    parser.add_argument("--clip-c", "--C", dest="clip_c", default=1.0, type=float)
+    parser.add_argument("--sigma", default=0.001, type=float)
+    parser.add_argument("--fed-clients", default=4, type=int)
+    parser.add_argument("--fed-rounds", default=20, type=int)
+    parser.add_argument("--fed-local-epochs", default=3, type=int)
+    parser.add_argument("--fed-lr", default=0.001, type=float)
+    parser.add_argument("--fed-batch-size", default=64, type=int)
+    parser.add_argument("--fed-hidden-dim", default=32, type=int)
+    parser.add_argument("--fed-device", default="cpu")
+    parser.add_argument("--fed-checkpoint", type=Path, help="Use a separately trained global scorer.")
+    parser.add_argument("--run-legacy-policy-simulation", action="store_true", help="Run legacy synthetic policy curves (not measured evidence).")
     return parser.parse_args()
 
 
@@ -47,6 +58,12 @@ def main():
         epochs=args.epochs,
         budget=args.budget,
         seed=args.seed,
+        mu=args.mu, clip_c=args.clip_c, sigma=args.sigma,
+        fed_clients=args.fed_clients, fed_rounds=args.fed_rounds,
+        fed_local_epochs=args.fed_local_epochs, fed_lr=args.fed_lr,
+        fed_batch_size=args.fed_batch_size, fed_hidden_dim=args.fed_hidden_dim,
+        fed_device=args.fed_device, fed_checkpoint=args.fed_checkpoint,
+        run_legacy_policy_simulation=args.run_legacy_policy_simulation,
     )
     llm_config = LLMConfig(
         base_url=args.base_url,
@@ -55,6 +72,7 @@ def main():
         tokenizer_name=args.tokenizer_name,
         embedding_model=args.embedding_model,
     )
+    from fedmr_2026.experiment import run_experiment
     run_experiment(exp_config, llm_config)
 
 
