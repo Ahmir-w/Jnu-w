@@ -26,3 +26,16 @@ class ExperimentConfig:
     epochs: int = 80
     budget: float = 30.0
     seed: int = 42
+
+    mu: float = 0.4
+    clip_c: float = 1.0
+    sigma: float = 0.001
+    fed_clients: int = 4
+    fed_rounds: int = 20
+    fed_local_epochs: int = 3
+    fed_lr: float = 0.001
+    fed_batch_size: int = 64
+    fed_hidden_dim: int = 32
+    fed_device: str = "cpu"
+    fed_checkpoint: Path | None = None
+    run_legacy_policy_simulation: bool = False
