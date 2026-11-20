@@ -1,9 +1,8 @@
 import math
-from datetime import datetime
 
 import numpy as np
 
-from .federated import FederatedCoordinator
+from .federated import FederatedCoordinator, influence_from_features, memory_features
 from .memory import DynamicMemoryBank, EnhancedMemoryUnit
 
 
@@ -12,29 +11,20 @@ class SubsetSelector:
         self,
         memory_bank: DynamicMemoryBank,
         federated_coordinator: FederatedCoordinator | None = None,
-        mu: float = 0.9,
+        mu: float = 0.4,
     ):
         self.memory_bank = memory_bank
         self.fed = federated_coordinator
         self.mu = mu
 
     def compute_local_value(self, unit: EnhancedMemoryUnit) -> float:
-        age_norm = min(1.0, (datetime.now() - unit.timestamp).total_seconds() / (3600 * 24))
-        ret_norm = min(1.0, unit.retrieval_freq / 100.0)
-        score = (
-            1.0 * unit.weight
-            + 0.5 * unit.difficulty
-            - 0.3 * unit.privacy_score
-            - 0.1 * age_norm
-            - 0.05 * ret_norm
-        )
-        return 1.0 / (1.0 + math.exp(-score))
+        return float(influence_from_features(memory_features(unit)))
 
     def compute_federated_score(self, unit: EnhancedMemoryUnit) -> float:
         local_score = self.compute_local_value(unit)
         if self.fed is None:
             return local_score
-        return (1 - self.mu) * local_score + self.mu * self.fed.get_global_score(unit.get_hash_key())
+        return (1 - self.mu) * local_score + self.mu * self.fed.get_global_score(unit)
 
     def compute_marginal_gain(self, unit: EnhancedMemoryUnit, lam1: float, lam2: float, task_emb: np.ndarray) -> float:
         fed_score = self.compute_federated_score(unit)
@@ -45,9 +35,6 @@ class SubsetSelector:
 
     def offline_selection(self, subset_size: int, lam1: float, lam2: float, task_emb: np.ndarray) -> set[int]:
         candidates: list[tuple[int, EnhancedMemoryUnit]] = [(i, unit) for i, unit in enumerate(self.memory_bank.units)]
-        if self.fed is not None:
-            for j, unit in enumerate(self.fed.get_global_units(top_k=200)):
-                candidates.append((-(j + 1), unit))
         scored = [
             (idx, self.compute_marginal_gain(unit, lam1, lam2, task_emb))
             for idx, unit in candidates
@@ -71,7 +58,7 @@ class SubsetSelector:
                 [
                     self.compute_marginal_gain(self.memory_bank.units[i], 0.5, 0.5, task_emb)
                     for i in current_subset
-                    if i < len(self.memory_bank.units)
+                    if 0 <= i < len(self.memory_bank.units)
                 ]
             )
             if delta > 0.8 * avg_gain:
@@ -80,7 +67,7 @@ class SubsetSelector:
             items = [
                 (i, self.compute_marginal_gain(self.memory_bank.units[i], 0.5, 0.5, task_emb))
                 for i in current_subset
-                if i < len(self.memory_bank.units)
+                if 0 <= i < len(self.memory_bank.units)
             ]
             items.sort(key=lambda x: x[1], reverse=True)
             current_subset = {i for i, _ in items[:subset_size]}
