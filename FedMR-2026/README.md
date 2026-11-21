@@ -27,8 +27,10 @@ FedMR-2026/
 ├── .gitignore                        # Git ignore rules for caches, outputs, data, checkpoints
 │
 ├── scripts/
+│   ├── federated_round.py.py 
 │   ├── run_experiment.py             # Main CLI entrypoint for all experiments
 │   └── run_natural_science.sh        # Example command for Natural_Science
+│   ├── test_federated_privacy.py 
 │
 └── src/
     └── fedmr_2026/
